@@ -28,6 +28,7 @@ func waitSignInt() {
 
 // TODO - Clean and re-structure some logs
 // TODO - Tests
+// TODO - Rename everything from hammertrace to hammertrack
 func main() {
 	b := bot.New()
 	go func() {
