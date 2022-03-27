@@ -26,6 +26,8 @@ func waitSignInt() {
 	log.Print("Stopping hammertrack tracker")
 }
 
+// TODO - Clean and re-structure some logs
+// TODO - Tests
 func main() {
 	b := bot.New()
 	go func() {

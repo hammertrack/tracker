@@ -3,10 +3,10 @@ package bot
 import (
 	"context"
 	"database/sql"
+	"log"
 	"strings"
 	"time"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/gempir/go-twitch-irc/v3"
 	"github.com/lib/pq"
 	cfg "pedro.to/hammertrace/tracker/internal/config"
@@ -14,12 +14,15 @@ import (
 	"pedro.to/hammertrace/tracker/internal/errors"
 )
 
+var ErrUncachedChannels = errors.New("Postgres storage layer requires to be called with OptimizeChannels() before starting")
+
 type Storage interface {
 	Start()
 	Stop() error
-	Channels() []string
+	Channels() []Channel
 	Save(msg *Message, recent []*twitch.PrivateMessage)
 	SaveOne(msg *Message)
+	OptimizeChannels() []string
 }
 
 type OpType int
@@ -46,11 +49,19 @@ type Postgres struct {
 	size     int
 	ctx      context.Context
 	cancel   context.CancelFunc
+	// In memory hash-table to cache and map twitch channel to internal ids, to
+	// avoid querying for them in every query
+	chanIds map[string]int
 }
 
-func (sto *Postgres) Channels() []string {
-	all := make([]string, 0, 100)
-	rows, err := sto.db.Query("SELECT name FROM broadcaster")
+type Channel struct {
+	ID   int    `db:"broadcaster.broadcaster_id"`
+	Name string `db:"broadcaster.name"`
+}
+
+func (sto *Postgres) Channels() []Channel {
+	all := make([]Channel, 0, 100)
+	rows, err := sto.db.Query("SELECT broadcaster_id, name FROM broadcaster")
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return all
@@ -59,11 +70,11 @@ func (sto *Postgres) Channels() []string {
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var name string
-		if err := rows.Scan(&name); err != nil {
+		var ch Channel
+		if err := rows.Scan(&ch.ID, &ch.Name); err != nil {
 			errors.WrapFatal(err)
 		}
-		all = append(all, name)
+		all = append(all, ch)
 	}
 	if err = rows.Err(); err != nil {
 		errors.WrapFatal(err)
@@ -71,21 +82,40 @@ func (sto *Postgres) Channels() []string {
 	return all
 }
 
+// OptimizeChannels queries for the tracked channels, caches them into a map of
+// name to id for later use and returns a slice with the names of all the
+// tracked channels, useful for use outside the storage.
+func (sto *Postgres) OptimizeChannels() []string {
+	chs := sto.Channels()
+
+	strs := make([]string, len(chs))
+	sto.chanIds = make(map[string]int, len(chs))
+	for i, ch := range chs {
+		strs[i] = ch.Name
+		sto.chanIds[ch.Name] = ch.ID
+	}
+	return strs
+}
+
 // Start initializes the storage batcher
 func (sto *Postgres) Start() {
-	ticker := time.NewTicker(5 * time.Second)
+	if len(sto.chanIds) == 0 {
+		errors.WrapFatal(ErrUncachedChannels)
+	}
+
+	ticker := time.NewTicker(30 * time.Second)
 	for {
 		// flush the query queue when it is full or every ticker seconds, whichever
 		// comes first
 		select {
 		case op := <-sto.op:
-			spew.Dump(op)
 			if size := sto.enqueue(op); size >= sto.maxqueue {
 				sto.flush()
 			}
 		case <-ticker.C:
 			sto.flush()
 		case <-sto.ctx.Done():
+			log.Print("Stopping tracking")
 			ticker.Stop()
 			return
 		}
@@ -112,6 +142,10 @@ func (sto *Postgres) Save(msg *Message, recent []*twitch.PrivateMessage) {
 		sb.WriteString(replacer.Replace(msg.Message) + sep)
 	}
 	str := sb.String()
+	if len(str) > 0 {
+		// Trim last sep
+		str = str[:len(str)-1]
+	}
 
 	sto.op <- &Op{
 		typ:      OpInsert,
@@ -119,7 +153,7 @@ func (sto *Postgres) Save(msg *Message, recent []*twitch.PrivateMessage) {
 		username: msg.Username,
 		channel:  msg.Channel,
 		duration: msg.Duration,
-		messages: str[:len(str)-1],
+		messages: str,
 		at:       msg.At,
 	}
 }
@@ -154,12 +188,20 @@ func (sto *Postgres) flush() {
 	}
 
 	stmt, err := tx.Prepare(
-		pq.CopyIn("clearchat", "type", "username", "channel", "duration", "at", "messages"),
+		pq.CopyIn("clearchat", "type", "username", "channel_name", "channel_id", "duration", "at", "messages"),
 	)
 
 	for i, l := 0, sto.size; i < l; i++ {
 		op := sto.queue[i]
-		_, err = stmt.Exec(op.banType, op.username, op.channel, op.duration, op.at, op.messages)
+		_, err = stmt.Exec(
+			op.banType,
+			op.username,
+			op.channel,
+			sto.chanIds[op.channel],
+			op.duration,
+			op.at,
+			op.messages,
+		)
 		if err != nil {
 			errors.WrapFatal(err)
 		}
@@ -195,6 +237,7 @@ func NewPostgresStorageWithCancel(
 		db:       database.New(cfg.DBMigrate),
 		ctx:      ctx,
 		cancel:   cancel,
+		op:       make(chan *Op, maxqueue),
 		queue:    make([]*Op, maxqueue),
 		maxqueue: maxqueue,
 	}

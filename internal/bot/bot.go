@@ -62,6 +62,7 @@ func handleClearChat(msg twitch.ClearChatMessage) {
 	if d == 0 {
 		typ = MessageBan
 	}
+	log.Printf("OnClearChat channel:%s duration:%d user:%s", ch, d, msg.TargetUsername)
 
 	tracked[ch] <- &Message{
 		Type:     typ,
@@ -74,6 +75,8 @@ func handleClearChat(msg twitch.ClearChatMessage) {
 
 // handleClearChat is called when a new deletion is received
 func handleClear(msg twitch.ClearMessage) {
+	log.Printf("OnClear channel:%s user:%s", msg.Channel, msg.Login)
+
 	tracked[msg.Channel] <- &Message{
 		Type:           MessageDeletion,
 		Username:       msg.Login,
@@ -170,13 +173,14 @@ func (b *Bot) StartTracker(channels []string) {
 func (b *Bot) Start() {
 	var w sync.WaitGroup
 	log.Print("initializing storage...")
+	b.SetStorage(NewPostgresStorage())
+	chs := b.sto.OptimizeChannels()
 	w.Add(1)
 	go func() {
 		b.sto.Start()
+		log.Print("storage stopped ")
 		w.Done()
 	}()
-
-	chs := b.Channels()
 
 	log.Print("initializing channel tracker...")
 	w.Add(1)
@@ -234,17 +238,12 @@ func (b *Bot) Stop() error {
 	return nil
 }
 
-func (b *Bot) Channels() []string {
-	return b.sto.Channels()
-}
-
 func New() *Bot {
 	b := &Bot{
 		trackerReady: make(chan struct{}, 1),
 		ircReady:     make(chan struct{}, 1),
 		done:         make(chan struct{}, 1),
 	}
-	b.SetStorage(NewPostgresStorage())
 	return b
 }
 

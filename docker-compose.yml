@@ -13,7 +13,7 @@ services:
       - ./etc:/var/lib/postgresql/data
     networks:
       - app
-    command: -p ${DB_PORT}
+    command: -p ${DB_PORT} -c stats_temp_directory=/tmp
 
   tracker:
     environment:

@@ -36,7 +36,8 @@ CREATE TABLE IF NOT EXISTS clearchat (
   clearchat_id bigserial PRIMARY KEY,
   type ban_type NOT NULL,
   username varchar(25) NOT NULL,
-  channel int NOT NULL REFERENCES broadcaster,
+  channel_name varchar(25) NOT NULL,
+  channel_id int NOT NULL REFERENCES broadcaster,
   duration int NOT NULL,
   at timestamp NOT NULL,
   messages varchar NOT NULL
@@ -49,10 +50,14 @@ ON clearchat(type);
 
 -- For queries: most recent of a particular channel
 CREATE INDEX idx_clearchat_channel_at
-ON clearchat(channel, at DESC);
+ON clearchat(channel_name, at DESC);
 
 -- For queries: most recent of a particular user
 CREATE INDEX idx_clearchat_username_at
 ON clearchat(username, at DESC);
+
+INSERT INTO broadcaster(name, lang)
+VALUES ('queryselectorall', 'es'),
+('zeling', 'es');
 
 COMMIT;
