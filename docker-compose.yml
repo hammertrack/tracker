@@ -1,0 +1,34 @@
+version: "3.9"
+services:
+  db:
+    image: postgres
+    restart: always
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "${DB_PORT}:${DB_PORT}"
+    volumes:
+      - ./etc:/var/lib/postgresql/data
+    networks:
+      - app
+    command: -p ${DB_PORT}
+
+  tracker:
+    environment:
+      DB_HOST: db
+      DB_USER: ${DB_USER}
+      DB_NAME: ${DB_NAME}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_PORT: ${DB_PORT}
+      DB_MIGRATE: ${DB_MIGRATE}
+    depends_on:
+      - db
+    build: .
+    networks:
+      - app
+
+networks:
+  app:
+

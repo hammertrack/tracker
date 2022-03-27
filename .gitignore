@@ -1,0 +1,5 @@
+etc/*
+tracker
+
+.DS_Store
+.env
