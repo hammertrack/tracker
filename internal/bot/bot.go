@@ -78,10 +78,15 @@ var tracked map[string]chan *Message
 // handleClearChat is called when a new timeout or ban message is received
 func handleClearChat(msg twitch.ClearChatMessage) {
 	var (
-		d   = msg.BanDuration
-		ch  = msg.Channel
-		typ = MessageTimeout
+		d        = msg.BanDuration
+		ch       = msg.Channel
+		typ      = MessageTimeout
+		username = msg.TargetUsername
 	)
+	if username == "" {
+		// ignore a CLEARCHAT of all messages with no specific user
+		return
+	}
 	if d == 0 {
 		typ = MessageBan
 	}
