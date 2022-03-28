@@ -6,81 +6,29 @@ import (
 	"sync"
 	"time"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/gempir/go-twitch-irc/v3"
 	cfg "pedro.to/hammertrace/tracker/internal/config"
 	"pedro.to/hammertrace/tracker/internal/errors"
 	"pedro.to/hammertrace/tracker/internal/message"
 )
 
-type MessageType string
-
-const (
-	MessagePrivmsg  MessageType = "privmsg"
-	MessageBan      MessageType = "ban"
-	MessageTimeout  MessageType = "timeout"
-	MessageDeletion MessageType = "deletion"
-
-	// MaxHistory represents the number of messages stored in a in-memory history
-	// for each channel. It should be equal to the messages displayed in twitch or
-	// at least the maximum number of messages which a moderator can take an
-	// action
-	MaxHistory = 150
-)
-
 // noopPrivmsg is used as default
-var noopPrivmsg = &PrivateMessage{
+var noopPrivmsg = &message.PrivateMessage{
 	ID:       "",
 	Username: "%noop%",
 	Body:     "",
 }
 
-// PrivateMessage represents each chat message in the IRC, i.e. twitch chat.
-type PrivateMessage struct {
-	ID       string
-	Username string
-	Body     string
-	At       time.Time
-	Stored   bool
-}
-
-// Message represents a message coming from the IRC client. It denormalizes the
-// different MessageType types of messages in a common interface so it can be
-// sent in the same go-channel.
-//
-// In IRC actions like deletions, timeouts or bans are also messages. For only
-// plain messages, i.e. PRIVMSG, and their details refer to `PrivateMessage`
-// type.
-type Message struct {
-	Type MessageType
-	// Channel represents the twitch channel
-	Channel string
-	// Username represents the owner of the message
-	Username string
-	// Duration represents in seconds the timeout. Duration is only present for
-	// messafe of type MessageTimeout and MessageBan
-	Duration int
-	// LastMessages contains the related PRIVMSGs. It may be multiple PRIVMSGs
-	// retrieved from a history in the case of bans and timeouts or single
-	// messages in the case of deletion messages or a PRIVMSG itself
-	LastMessages []*PrivateMessage
-	// Used in case of deletions
-	TargetMsgID string
-	// At represents the timestamp of the message in the case of a MessageChat
-	// type or the time of the moderation (deletion/ban/timeout)
-	At time.Time
-}
-
 // tracked is a hashtable which contains each go-channel for each twitch
 // tracked channel
-var tracked map[string]chan *Message
+var tracked map[string]chan *message.Message
 
 // handleClearChat is called when a new timeout or ban message is received
 func handleClearChat(msg twitch.ClearChatMessage) {
 	var (
 		d        = msg.BanDuration
 		ch       = msg.Channel
-		typ      = MessageTimeout
+		typ      = message.MessageTimeout
 		username = msg.TargetUsername
 	)
 	if username == "" {
@@ -88,11 +36,11 @@ func handleClearChat(msg twitch.ClearChatMessage) {
 		return
 	}
 	if d == 0 {
-		typ = MessageBan
+		typ = message.MessageBan
 	}
 	log.Printf("OnClearChat channel:%s duration:%d user:%s", ch, d, msg.TargetUsername)
 
-	tracked[ch] <- &Message{
+	tracked[ch] <- &message.Message{
 		Type:     typ,
 		Duration: d,
 		Username: msg.TargetUsername,
@@ -104,9 +52,9 @@ func handleClearChat(msg twitch.ClearChatMessage) {
 // handleClearChat is called when a new deletion is received
 func handleClear(msg twitch.ClearMessage) {
 	log.Printf("OnClear channel:%s user:%s", msg.Channel, msg.Login)
-	tracked[msg.Channel] <- &Message{
+	tracked[msg.Channel] <- &message.Message{
 		TargetMsgID: msg.TargetMsgID,
-		Type:        MessageDeletion,
+		Type:        message.MessageDeletion,
 		Username:    msg.Login,
 		Channel:     msg.Channel,
 		At:          time.Now(),
@@ -116,17 +64,17 @@ func handleClear(msg twitch.ClearMessage) {
 // handlePrivmsg is called when a new message in the twitch chat of any of the
 // tracked twitch channels is received
 func handlePrivmsg(msg twitch.PrivateMessage) {
-	privmsg := &PrivateMessage{
+	privmsg := &message.PrivateMessage{
 		ID:       msg.ID,
 		Username: msg.User.Name,
 		Body:     msg.Message,
 		At:       msg.Time,
 	}
-	tracked[msg.Channel] <- &Message{
-		Type:         MessagePrivmsg,
+	tracked[msg.Channel] <- &message.Message{
+		Type:         message.MessagePrivmsg,
 		Username:     msg.User.Name,
 		Channel:      msg.Channel,
-		LastMessages: []*PrivateMessage{privmsg},
+		LastMessages: []*message.PrivateMessage{privmsg},
 		At:           msg.Time,
 	}
 }
@@ -169,23 +117,22 @@ func (b *Bot) StartTracker(channels []string) {
 	var w sync.WaitGroup
 
 	for _, ch := range channels {
-		msgch := make(chan *Message, 100)
+		msgch := make(chan *message.Message, 100)
 		tracked[ch] = msgch
 
 		w.Add(1)
-		go func(msgch chan *Message) {
+		go func(msgch chan *message.Message) {
 			// history is scoped to each go-routine, per twitch channel.
-			history := message.New(MaxHistory, noopPrivmsg)
+			history := message.New(message.MaxHistory, noopPrivmsg)
 
 			for msg := range msgch {
 				switch msg.Type {
-				case MessageBan:
+				case message.MessageBan:
 					fallthrough
-				case MessageTimeout:
+				case message.MessageTimeout:
 					// find in the history previous messages related to the ban/timeout,
 					// if the message is already `Stored` ignore it.
-					spew.Dump(history.All())
-					msg.LastMessages = history.Filter(func(privmsg *PrivateMessage) bool {
+					msg.LastMessages = history.Filter(func(privmsg *message.PrivateMessage) bool {
 						if privmsg.Username == msg.Username && !privmsg.Stored {
 							// mutate the message so we never store it again
 							privmsg.Stored = true
@@ -194,12 +141,12 @@ func (b *Bot) StartTracker(channels []string) {
 						return false
 					})
 					b.sto.Save(msg)
-				case MessageDeletion:
+				case message.MessageDeletion:
 					// find the message in the history with the corresponding ID, if the
 					// message is already `Stored` ignore it. We could retrieve the body
 					// of the message from the CLEARCHAT message but then we couldn't
 					// figure out the time span between the message and the deletion
-					privmsg := history.Find(func(privmsg *PrivateMessage) bool {
+					privmsg := history.Find(func(privmsg *message.PrivateMessage) bool {
 						if privmsg.ID == msg.TargetMsgID && !privmsg.Stored {
 							privmsg.Stored = true
 							return true
@@ -207,10 +154,10 @@ func (b *Bot) StartTracker(channels []string) {
 						return false
 					})
 					if privmsg != nil {
-						msg.LastMessages = []*PrivateMessage{privmsg}
+						msg.LastMessages = []*message.PrivateMessage{privmsg}
 						b.sto.Save(msg)
 					}
-				case MessagePrivmsg:
+				case message.MessagePrivmsg:
 					// extend the history with the received message
 					history = history.Append(msg.LastMessages[0])
 				}
@@ -304,5 +251,5 @@ func New() *Bot {
 }
 
 func init() {
-	tracked = make(map[string]chan *Message)
+	tracked = make(map[string]chan *message.Message)
 }
