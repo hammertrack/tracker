@@ -54,15 +54,29 @@ type Op struct {
 }
 
 type Postgres struct {
-	db       *sql.DB
+	db *sql.DB
+	// note: op may be a bottleneck in the future as it receives the database
+	// insertions from all the channels and all the goroutines will block until
+	// their messages are handled in the op channel, it could need multiple
+	// workers in different threads to be able to handle the overload.
+	//
+	// An idea for the future: first if the bottleneck starts being noticeable in
+	// latency increase the queue size (and maybe the RAM of the instance). if it
+	// consumes too much ram or the queue is delaying the insertions of the
+	// messages too much then start scaling by splitting the logic of the op
+	// channel into workers, one per core in the instance (maybe increase the
+	// cores in the instance) and one database connection per instance. If the
+	// number of ops is too high, then scale by creating more instances, dividing
+	// the number of channels tracked between all the instances. The database may
+	// also need different partitions and instances.
 	op       chan *Op
 	queue    []*Op
 	maxqueue int
 	size     int
 	ctx      context.Context
 	cancel   context.CancelFunc
-	// In memory hash-table to cache and map twitch channel to internal ids, to
-	// avoid querying for them in every query
+	// In memory hash-table to cache and map twitch channels to internal ids to
+	// avoid querying in every query
 	chanIds  map[string]int
 	analyzer *heuristics.Analyzer
 }

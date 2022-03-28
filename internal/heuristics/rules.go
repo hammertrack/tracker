@@ -84,7 +84,7 @@ func RuleOnlyHumanModerations(minHumanlyPossible float64) *OnlyHumanModerations 
 
 // AlwaysStoreBans - self-explanatory
 //
-// Reason: Always are rarely automatic and almost always for a good reason,
+// Reason: They are rarely automatic and almost always for a good reason,
 // providing useful information about the user. Also mitigates some caveats from
 // other rules or possible bugs.
 //

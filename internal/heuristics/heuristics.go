@@ -31,12 +31,8 @@ type Rule interface {
 	Final() bool
 }
 
-type Test interface {
-	Rule
-}
-
-// Analyzer use simple heuristics to decide whether a message is valid or not,
-// by applying a set of cached rules against the traits of each message.
+// Analyzer use simple heuristics to decide whether a message is valid or not by
+// applying a set of cached rules against the traits of each message.
 type Analyzer struct {
 	rules []Rule
 }
@@ -51,6 +47,11 @@ func (a *Analyzer) Compile() {
 // IsCompliant runs all the rules against the `target` traits of a given message.
 // It returns true if it is compliant with every rule or false if a single rule
 // returns false.
+//
+// If a rule is final, i.e. it has a `Final()` method that returns true, and the
+// rule returns true, the analyzer will return true and ignore the rest of the
+// rules. If a final rule returns false it is ignored. Final rules cannot
+// describe non-compliant behaviour by design.
 //
 // IsCompliant requires rules to be compiled before with `Compile()` or it may
 // throw a nil pointer derefence error
