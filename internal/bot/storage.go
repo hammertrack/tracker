@@ -7,11 +7,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gempir/go-twitch-irc/v3"
 	"github.com/lib/pq"
 	cfg "pedro.to/hammertrace/tracker/internal/config"
 	"pedro.to/hammertrace/tracker/internal/database"
 	"pedro.to/hammertrace/tracker/internal/errors"
+)
+
+const (
+	// FlushInterval is the time span between flushes if the queue is not full
+	FlushInterval = 5
 )
 
 var ErrUncachedChannels = errors.New("Postgres storage layer requires to be called with OptimizeChannels() before starting")
@@ -20,8 +24,7 @@ type Storage interface {
 	Start()
 	Stop() error
 	Channels() []Channel
-	Save(msg *Message, recent []*twitch.PrivateMessage)
-	SaveOne(msg *Message)
+	Save(msg *Message)
 	OptimizeChannels() []string
 }
 
@@ -103,7 +106,7 @@ func (sto *Postgres) Start() {
 		errors.WrapFatal(ErrUncachedChannels)
 	}
 
-	ticker := time.NewTicker(30 * time.Second)
+	ticker := time.NewTicker(FlushInterval * time.Second)
 	for {
 		// flush the query queue when it is full or every ticker seconds, whichever
 		// comes first
@@ -136,10 +139,10 @@ const sep = "|"
 
 var replacer = strings.NewReplacer(sep, "\\"+sep)
 
-func (sto *Postgres) Save(msg *Message, recent []*twitch.PrivateMessage) {
+func (sto *Postgres) Save(msg *Message) {
 	var sb strings.Builder
-	for _, msg := range recent {
-		sb.WriteString(replacer.Replace(msg.Message) + sep)
+	for _, privmsg := range msg.LastMessages {
+		sb.WriteString(replacer.Replace(privmsg.Body) + sep)
 	}
 	str := sb.String()
 	if len(str) > 0 {
@@ -154,18 +157,6 @@ func (sto *Postgres) Save(msg *Message, recent []*twitch.PrivateMessage) {
 		channel:  msg.Channel,
 		duration: msg.Duration,
 		messages: str,
-		at:       msg.At,
-	}
-}
-
-func (sto *Postgres) SaveOne(msg *Message) {
-	sto.op <- &Op{
-		typ:      OpInsert,
-		banType:  string(msg.Type),
-		username: msg.Username,
-		channel:  msg.Channel,
-		duration: 0,
-		messages: msg.DeletedMessage,
 		at:       msg.At,
 	}
 }

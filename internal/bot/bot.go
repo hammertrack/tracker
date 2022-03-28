@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/davecgh/go-spew/spew"
 	"github.com/gempir/go-twitch-irc/v3"
 	cfg "pedro.to/hammertrace/tracker/internal/config"
 	"pedro.to/hammertrace/tracker/internal/errors"
@@ -15,10 +16,16 @@ import (
 type MessageType string
 
 const (
-	MessageChat     MessageType = "chat"
+	MessagePrivmsg  MessageType = "privmsg"
 	MessageBan      MessageType = "ban"
 	MessageTimeout  MessageType = "timeout"
 	MessageDeletion MessageType = "deletion"
+
+	// MaxHistory represents the number of messages stored in a in-memory history
+	// for each channel. It should be equal to the messages displayed in twitch or
+	// at least the maximum number of messages which a moderator can take an
+	// action
+	MaxHistory = 150
 )
 
 var dummyMessage = &twitch.PrivateMessage{
@@ -27,8 +34,29 @@ var dummyMessage = &twitch.PrivateMessage{
 	},
 }
 
-// Message represents a message coming from the IRC client. It standarizes the
-// different MessageType types of messages in a common interface
+// noopPrivmsg is used as default
+var noopPrivmsg = &PrivateMessage{
+	ID:       "",
+	Username: "%noop%",
+	Body:     "",
+}
+
+// PrivateMessage represents each chat message in the IRC, i.e. twitch chat.
+type PrivateMessage struct {
+	ID       string
+	Username string
+	Body     string
+	At       time.Time
+	Stored   bool
+}
+
+// Message represents a message coming from the IRC client. It denormalizes the
+// different MessageType types of messages in a common interface so it can be
+// sent in the same go-channel.
+//
+// In IRC actions like deletions, timeouts or bans are also messages. For only
+// plain messages, i.e. PRIVMSG, and their details refer to `PrivateMessage`
+// type.
 type Message struct {
 	Type MessageType
 	// Channel represents the twitch channel
@@ -38,11 +66,12 @@ type Message struct {
 	// Duration represents in seconds the timeout. Duration is only present for
 	// messafe of type MessageTimeout and MessageBan
 	Duration int
-	// Original contains the underlying message from the IRC client. Original is only
-	// present for messages of type MessageChat
-	Original *twitch.PrivateMessage
-	// DeletedMessage contains the message for MessageDeletion type
-	DeletedMessage string
+	// LastMessages contains the related PRIVMSGs. It may be multiple PRIVMSGs
+	// retrieved from a history in the case of bans and timeouts or single
+	// messages in the case of deletion messages or a PRIVMSG itself
+	LastMessages []*PrivateMessage
+	// Used in case of deletions
+	TargetMsgID string
 	// At represents the timestamp of the message in the case of a MessageChat
 	// type or the time of the moderation (deletion/ban/timeout)
 	At time.Time
@@ -76,25 +105,30 @@ func handleClearChat(msg twitch.ClearChatMessage) {
 // handleClearChat is called when a new deletion is received
 func handleClear(msg twitch.ClearMessage) {
 	log.Printf("OnClear channel:%s user:%s", msg.Channel, msg.Login)
-
 	tracked[msg.Channel] <- &Message{
-		Type:           MessageDeletion,
-		Username:       msg.Login,
-		Channel:        msg.Channel,
-		DeletedMessage: msg.Message,
-		At:             time.Now(),
+		TargetMsgID: msg.TargetMsgID,
+		Type:        MessageDeletion,
+		Username:    msg.Login,
+		Channel:     msg.Channel,
+		At:          time.Now(),
 	}
 }
 
-// handleChat is called when a new message in the twitch chat of any of the
+// handlePrivmsg is called when a new message in the twitch chat of any of the
 // tracked twitch channels is received
-func handleChat(msg twitch.PrivateMessage) {
-	tracked[msg.Channel] <- &Message{
-		Type:     MessageChat,
+func handlePrivmsg(msg twitch.PrivateMessage) {
+	privmsg := &PrivateMessage{
+		ID:       msg.ID,
 		Username: msg.User.Name,
-		Channel:  msg.Channel,
-		Original: &msg,
+		Body:     msg.Message,
 		At:       msg.Time,
+	}
+	tracked[msg.Channel] <- &Message{
+		Type:         MessagePrivmsg,
+		Username:     msg.User.Name,
+		Channel:      msg.Channel,
+		LastMessages: []*PrivateMessage{privmsg},
+		At:           msg.Time,
 	}
 }
 
@@ -119,7 +153,7 @@ func (b *Bot) StartClient(channels []string) error {
 	b.client = twitch.NewClient(cfg.ClientUsername, cfg.ClientToken)
 	b.client.OnClearChatMessage(handleClearChat)
 	b.client.OnClearMessage(handleClear)
-	b.client.OnPrivateMessage(handleChat)
+	b.client.OnPrivateMessage(handlePrivmsg)
 	b.client.OnConnect(func() {
 		b.ircReady <- struct{}{}
 	})
@@ -142,21 +176,44 @@ func (b *Bot) StartTracker(channels []string) {
 		w.Add(1)
 		go func(msgch chan *Message) {
 			// history is scoped to each go-routine, per twitch channel.
-			history := message.New(100, dummyMessage)
+			history := message.New(MaxHistory, noopPrivmsg)
 
 			for msg := range msgch {
 				switch msg.Type {
 				case MessageBan:
 					fallthrough
 				case MessageTimeout:
-					b.sto.Save(msg, history.Filter(func(el *twitch.PrivateMessage) bool {
-						return el.User.Name == msg.Username
-					}))
+					// find in the history previous messages related to the ban/timeout,
+					// if the message is already `Stored` ignore it.
+					spew.Dump(history.All())
+					msg.LastMessages = history.Filter(func(privmsg *PrivateMessage) bool {
+						if privmsg.Username == msg.Username && !privmsg.Stored {
+							// mutate the message so we never store it again
+							privmsg.Stored = true
+							return true
+						}
+						return false
+					})
+					b.sto.Save(msg)
 				case MessageDeletion:
-					b.sto.SaveOne(msg)
-				case MessageChat:
+					// find the message in the history with the corresponding ID, if the
+					// message is already `Stored` ignore it. We could retrieve the body
+					// of the message from the CLEARCHAT message but then we couldn't
+					// figure out the time span between the message and the deletion
+					privmsg := history.Find(func(privmsg *PrivateMessage) bool {
+						if privmsg.ID == msg.TargetMsgID && !privmsg.Stored {
+							privmsg.Stored = true
+							return true
+						}
+						return false
+					})
+					if privmsg != nil {
+						msg.LastMessages = []*PrivateMessage{privmsg}
+						b.sto.Save(msg)
+					}
+				case MessagePrivmsg:
 					// extend the history with the received message
-					history = history.Append(msg.Original)
+					history = history.Append(msg.LastMessages[0])
 				}
 			}
 			w.Done()

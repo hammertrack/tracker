@@ -36,27 +36,46 @@ func (last *MessageRing[V]) Append(val V) *MessageRing[V] {
 	return next
 }
 
-func (last *MessageRing[V]) Do(fn func(msg *MessageRing[V], index int)) {
+// Do executes a `fn` function for each element. If the functions returns true
+// it will stop iterating.
+func (last *MessageRing[V]) Do(fn func(msg *MessageRing[V], index int) bool) {
 	fn(last, 0)
 	for prev, i := last.prev, 1; prev != last; prev, i = prev.prev, i+1 {
-		fn(prev, i)
+		if fn(prev, i) {
+			return
+		}
 	}
 }
 
+// Find the first element that matches in a `fn` function
+func (last *MessageRing[V]) Find(fn func(val V) bool) (v V) {
+	last.Do(func(msg *MessageRing[V], _ int) bool {
+		if fn(msg.val) {
+			v = msg.val
+			return true
+		}
+		return false
+	})
+	return
+}
+
+// Filter returns all the elements that matches a filter `fn` function
 func (last *MessageRing[V]) Filter(fn func(val V) bool) []V {
 	msgs := make([]V, 0, last.size)
-	last.Do(func(msg *MessageRing[V], _ int) {
+	last.Do(func(msg *MessageRing[V], _ int) bool {
 		if fn(msg.val) {
 			msgs = append(msgs, msg.val)
 		}
+		return false
 	})
 	return msgs
 }
 
 func (last *MessageRing[V]) All() []V {
 	all := make([]V, last.size)
-	last.Do(func(msg *MessageRing[V], i int) {
+	last.Do(func(msg *MessageRing[V], i int) bool {
 		all[i] = msg.val
+		return false
 	})
 	return all
 }
