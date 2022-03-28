@@ -28,12 +28,6 @@ const (
 	MaxHistory = 150
 )
 
-var dummyMessage = &twitch.PrivateMessage{
-	User: twitch.User{
-		Name: "%invalid%",
-	},
-}
-
 // noopPrivmsg is used as default
 var noopPrivmsg = &PrivateMessage{
 	ID:       "",
