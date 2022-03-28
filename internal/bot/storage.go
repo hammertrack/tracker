@@ -11,11 +11,20 @@ import (
 	cfg "pedro.to/hammertrace/tracker/internal/config"
 	"pedro.to/hammertrace/tracker/internal/database"
 	"pedro.to/hammertrace/tracker/internal/errors"
+	"pedro.to/hammertrace/tracker/internal/heuristics"
+	"pedro.to/hammertrace/tracker/internal/message"
 )
 
 const (
 	// FlushInterval is the time span between flushes if the queue is not full
 	FlushInterval = 5
+	// Size of the database insert/etc. batches
+	OpQueueSize = 100
+	// Exclusive minimum duration for storing timeout messages
+	MinTimeoutDuration = 5
+	// Exclusive minimum number of seconds that has to happen for the moderation
+	// to be considered human
+	MinHumanlyPossible float64 = .9
 )
 
 var ErrUncachedChannels = errors.New("Postgres storage layer requires to be called with OptimizeChannels() before starting")
@@ -24,7 +33,7 @@ type Storage interface {
 	Start()
 	Stop() error
 	Channels() []Channel
-	Save(msg *Message)
+	Save(msg *message.Message)
 	OptimizeChannels() []string
 }
 
@@ -54,7 +63,8 @@ type Postgres struct {
 	cancel   context.CancelFunc
 	// In memory hash-table to cache and map twitch channel to internal ids, to
 	// avoid querying for them in every query
-	chanIds map[string]int
+	chanIds  map[string]int
+	analyzer *heuristics.Analyzer
 }
 
 type Channel struct {
@@ -137,11 +147,35 @@ func (sto *Postgres) Stop() error {
 
 const sep = "|"
 
+// replacer is safe for concurrent use
 var replacer = strings.NewReplacer(sep, "\\"+sep)
 
-func (sto *Postgres) Save(msg *Message) {
-	var sb strings.Builder
+func (sto *Postgres) Save(msg *message.Message) {
+	var (
+		sb strings.Builder
+		t  = heuristics.Traits{}
+	)
+	if len(msg.LastMessages) > 0 {
+		privmsg := msg.LastMessages[0]
+		log.Printf("%s: %s; T-%f", msg.Username, privmsg.Body, msg.At.Sub(msg.LastMessages[0].At).Seconds())
+	}
+
+	// flag to identify most recent message (=msg.LastMessages[0])
+	t.IsMostRecentMsg = true
 	for _, privmsg := range msg.LastMessages {
+		// reuse trait object for every recent message
+		t.Body = privmsg.Body
+		t.At = privmsg.At
+		t.ModeratedAt = msg.At
+		t.Type = msg.Type
+		t.TimeoutDuration = msg.Duration
+		if !sto.analyzer.IsCompliant(t) {
+			log.Print("Abort storing")
+			// if a single message of all the ones cleared is not compliant, abort
+			return
+		}
+		t.IsMostRecentMsg = false
+
 		sb.WriteString(replacer.Replace(privmsg.Body) + sep)
 	}
 	str := sb.String()
@@ -223,13 +257,21 @@ func NewPostgresStorageWithCancel(
 	ctx context.Context,
 	cancel context.CancelFunc,
 ) Storage {
-	maxqueue := 100
+	// rules for storing messages
+	a := heuristics.New([]heuristics.Rule{
+		heuristics.RuleAlwaysStoreBans(),
+		heuristics.RuleOnlyHumanModerations(MinHumanlyPossible),
+		heuristics.RuleMinTimeoutDuration(MinTimeoutDuration),
+		heuristics.RuleNoLinks(),
+	})
+	a.Compile()
 	return &Postgres{
+		analyzer: a,
 		db:       database.New(cfg.DBMigrate),
 		ctx:      ctx,
 		cancel:   cancel,
-		op:       make(chan *Op, maxqueue),
-		queue:    make([]*Op, maxqueue),
-		maxqueue: maxqueue,
+		op:       make(chan *Op, OpQueueSize),
+		queue:    make([]*Op, OpQueueSize),
+		maxqueue: OpQueueSize,
 	}
 }

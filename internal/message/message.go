@@ -1,5 +1,58 @@
 package message
 
+import "time"
+
+type MessageType string
+
+const (
+	MessagePrivmsg  MessageType = "privmsg"
+	MessageBan      MessageType = "ban"
+	MessageTimeout  MessageType = "timeout"
+	MessageDeletion MessageType = "deletion"
+
+	// MaxHistory represents the number of messages stored in a in-memory history
+	// for each channel. It should be equal to the messages displayed in twitch or
+	// at least the maximum number of messages which a moderator can take an
+	// action
+	MaxHistory = 150
+)
+
+// PrivateMessage represents each chat message in the IRC, i.e. twitch chat.
+type PrivateMessage struct {
+	ID       string
+	Username string
+	Body     string
+	At       time.Time
+	Stored   bool
+}
+
+// Message represents a message coming from the IRC client. It denormalizes the
+// different MessageType types of messages in a common interface so it can be
+// sent in the same go-channel.
+//
+// In IRC actions like deletions, timeouts or bans are also messages. For only
+// plain messages, i.e. PRIVMSG, and their details refer to `PrivateMessage`
+// type.
+type Message struct {
+	Type MessageType
+	// Channel represents the twitch channel
+	Channel string
+	// Username represents the owner of the message
+	Username string
+	// Duration represents in seconds the timeout. Duration is only present for
+	// messafe of type MessageTimeout and MessageBan
+	Duration int
+	// LastMessages contains the related PRIVMSGs. It may be multiple PRIVMSGs
+	// retrieved from a history in the case of bans and timeouts or single
+	// messages in the case of deletion messages or a PRIVMSG itself
+	LastMessages []*PrivateMessage
+	// Used in case of deletions
+	TargetMsgID string
+	// At represents the timestamp of the message in the case of a MessageChat
+	// type or the time of the moderation (deletion/ban/timeout)
+	At time.Time
+}
+
 // MessageRing is a ring buffer that contains values of `V` type in a circular
 // list of messages, effectively creating a rotating window of `size` size.
 //
