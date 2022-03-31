@@ -28,17 +28,16 @@ func handleClearChat(msg twitch.ClearChatMessage) {
 	var (
 		d        = msg.BanDuration
 		ch       = msg.Channel
-		typ      = message.MessageTimeout
+		typ      = message.MessageBan
 		username = msg.TargetUsername
 	)
 	if username == "" {
 		// ignore a CLEARCHAT of all messages with no specific user
 		return
 	}
-	if d == 0 {
-		typ = message.MessageBan
+	if d != 0 {
+		return
 	}
-	log.Printf("OnClearChat channel:%s duration:%d user:%s", ch, d, msg.TargetUsername)
 
 	tracked[ch] <- &message.Message{
 		Type:     typ,
@@ -51,7 +50,7 @@ func handleClearChat(msg twitch.ClearChatMessage) {
 
 // handleClearChat is called when a new deletion is received
 func handleClear(msg twitch.ClearMessage) {
-	log.Printf("OnClear channel:%s user:%s", msg.Channel, msg.Login)
+	// log.Printf("OnClear channel:%s user:%s", msg.Channel, msg.Login)
 	tracked[msg.Channel] <- &message.Message{
 		TargetMsgID: msg.TargetMsgID,
 		Type:        message.MessageDeletion,
@@ -99,7 +98,7 @@ type Bot struct {
 func (b *Bot) StartClient(channels []string) error {
 	b.client = twitch.NewClient(cfg.ClientUsername, cfg.ClientToken)
 	b.client.OnClearChatMessage(handleClearChat)
-	b.client.OnClearMessage(handleClear)
+	// b.client.OnClearMessage(handleClear)
 	b.client.OnPrivateMessage(handlePrivmsg)
 	b.client.OnConnect(func() {
 		b.ircReady <- struct{}{}

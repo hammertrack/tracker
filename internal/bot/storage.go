@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -166,12 +167,13 @@ var replacer = strings.NewReplacer(sep, "\\"+sep)
 
 func (sto *Postgres) Save(msg *message.Message) {
 	var (
-		sb strings.Builder
-		t  = heuristics.Traits{}
+		sb     strings.Builder
+		logmsg strings.Builder
+		t      = heuristics.Traits{}
 	)
 	if len(msg.LastMessages) > 0 {
 		privmsg := msg.LastMessages[0]
-		log.Printf("%s: %s; T-%f", msg.Username, privmsg.Body, msg.At.Sub(msg.LastMessages[0].At).Seconds())
+		logmsg.WriteString(fmt.Sprintf("%s: %s; T-%f", msg.Username, privmsg.Body, msg.At.Sub(msg.LastMessages[0].At).Seconds()))
 	}
 
 	// flag to identify most recent message (=msg.LastMessages[0])
@@ -184,7 +186,6 @@ func (sto *Postgres) Save(msg *message.Message) {
 		t.Type = msg.Type
 		t.TimeoutDuration = msg.Duration
 		if !sto.analyzer.IsCompliant(t) {
-			log.Print("Abort storing")
 			// if a single message of all the ones cleared is not compliant, abort
 			return
 		}
@@ -207,6 +208,8 @@ func (sto *Postgres) Save(msg *message.Message) {
 		messages: str,
 		at:       msg.At,
 	}
+	logmsg.WriteString(" [S]")
+	log.Print(logmsg.String())
 }
 
 func (sto *Postgres) enqueue(op *Op) int {
