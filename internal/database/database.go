@@ -2,16 +2,17 @@ package database
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"log"
 	"os"
 	"time"
 
+	"github.com/gocql/gocql"
 	gomigrate "github.com/golang-migrate/migrate/v4"
-	"github.com/golang-migrate/migrate/v4/database/postgres"
+	"github.com/golang-migrate/migrate/v4/database/cassandra"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
-	_ "github.com/lib/pq"
+
+	// _ "github.com/lib/pq"
 
 	cfg "pedro.to/hammertrace/tracker/internal/config"
 	"pedro.to/hammertrace/tracker/internal/errors"
@@ -32,13 +33,19 @@ func src() string {
 
 // pingUntil tries to connect to the database. If the database is not ready it will
 // try again until the given context is canceled
-func pingUntil(ctx context.Context, db *sql.DB) (err error) {
+func pingUntil(ctx context.Context, c *gocql.ClusterConfig) (s *gocql.Session, err error) {
 	timer := time.NewTicker(time.Second)
 	for {
 		select {
 		case <-timer.C:
-			if err = db.Ping(); err == nil {
-				return
+			if s, err = c.CreateSession(); err == nil {
+				var t string
+				if err = s.Query("SELECT now() FROM system.local").
+					WithContext(ctx).
+					Consistency(gocql.One).
+					Scan(&t); err == nil {
+					return
+				}
 			}
 		case <-ctx.Done():
 			return
@@ -46,15 +53,18 @@ func pingUntil(ctx context.Context, db *sql.DB) (err error) {
 	}
 }
 
-func migrate(db *sql.DB) (err error) {
-	driver, err := postgres.WithInstance(db, &postgres.Config{})
+func migrate(s *gocql.Session) (err error) {
+	driver, err := cassandra.WithInstance(s, &cassandra.Config{
+		MultiStatementEnabled: true,
+		KeyspaceName:          cfg.DBKeyspace,
+	})
 	if err != nil {
 		return
 	}
 
 	mg, err := gomigrate.NewWithDatabaseInstance(
-		"file://internal/database/migrations",
-		"postgres", driver,
+		"file://internal/database/migrations/cassandra",
+		"cassandra", driver,
 	)
 	if err != nil {
 		return
@@ -69,21 +79,19 @@ func migrate(db *sql.DB) (err error) {
 	return
 }
 
-func New(doMigrate bool) *sql.DB {
-	log.Print("validating database connection...")
-	db, err := sql.Open("postgres", src())
-	if err != nil {
-		errors.WrapFatalWithContext(ErrDBBadArguments, struct {
-			Cause string
-		}{err.Error()})
-	}
-	log.Print("  ✓ database parameters")
+func New(doMigrate bool) *gocql.Session {
+	cluster := gocql.NewCluster(fmt.Sprintf("%s:%s", cfg.DBHost, cfg.DBPort))
+	cluster.Keyspace = cfg.DBKeyspace
+	cluster.ProtoVersion = 4
+	cluster.Consistency = gocql.Quorum
 
 	log.Print("testing database connection...")
 	ctx := context.Background()
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(cfg.DBConnTimeoutSeconds)*time.Second)
 	defer cancel()
-	if err = pingUntil(ctx, db); err != nil {
+
+	s, err := pingUntil(ctx, cluster)
+	if err != nil {
 		errors.WrapFatalWithContext(ErrDBConnTimeout, struct {
 			Cause string
 		}{err.Error()})
@@ -92,7 +100,7 @@ func New(doMigrate bool) *sql.DB {
 
 	if doMigrate {
 		log.Print("applying migrations...")
-		if err := migrate(db); err != nil {
+		if err := migrate(s); err != nil {
 			errors.WrapFatalWithContext(ErrDBMigration, struct {
 				Cause string
 			}{err.Error()})
@@ -100,5 +108,5 @@ func New(doMigrate bool) *sql.DB {
 		log.Printf("  ✓ database is up to date - v%d", cfg.DBVersion)
 	}
 
-	return db
+	return s
 }

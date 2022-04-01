@@ -8,19 +8,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lib/pq"
-	cfg "pedro.to/hammertrace/tracker/internal/config"
-	"pedro.to/hammertrace/tracker/internal/database"
 	"pedro.to/hammertrace/tracker/internal/errors"
 	"pedro.to/hammertrace/tracker/internal/heuristics"
 	"pedro.to/hammertrace/tracker/internal/message"
 )
 
 const (
-	// FlushInterval is the time span between flushes if the queue is not full
-	FlushInterval = 5
-	// Size of the database insert/etc. batches
-	OpQueueSize = 100
+	QueueSize = 200
+
 	// Exclusive minimum duration for storing timeout messages
 	MinTimeoutDuration = 5
 	// Exclusive minimum number of seconds that has to happen for the moderation
@@ -30,12 +25,51 @@ const (
 
 var ErrUncachedChannels = errors.New("Postgres storage layer requires to be called with OptimizeChannels() before starting")
 
-type Storage interface {
-	Start()
-	Stop() error
-	Channels() []Channel
-	Save(msg *message.Message)
-	OptimizeChannels() []string
+type Driver interface {
+	Insert(msg *message.Message)
+	Channels() ([]Channel, error)
+	Close() error
+}
+
+type Storage struct {
+	queue  chan *message.Message
+	ctx    context.Context
+	cancel context.CancelFunc
+	driver Driver
+}
+
+func (s *Storage) Start() {
+	for {
+		select {
+		case msg := <-s.queue:
+			s.driver.Insert(msg)
+		case <-s.ctx.Done():
+			return
+		}
+	}
+}
+
+func (s *Storage) Stop() {
+	s.cancel()
+	s.driver.Close()
+}
+
+func (s *Storage) Save(msg *message.Message) {
+	s.driver.Insert(msg)
+}
+
+func (s *Storage) Channels() ([]Channel, error) {
+	return s.driver.Channels()
+}
+
+func NewStorage(d Driver) *Storage {
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Storage{
+		ctx:    ctx,
+		cancel: cancel,
+		queue:  make(chan *message.Message, QueueSize),
+		driver: d,
+	}
 }
 
 type OpType int
@@ -82,83 +116,7 @@ type Postgres struct {
 	analyzer *heuristics.Analyzer
 }
 
-type Channel struct {
-	ID   int    `db:"broadcaster.broadcaster_id"`
-	Name string `db:"broadcaster.name"`
-}
-
-func (sto *Postgres) Channels() []Channel {
-	all := make([]Channel, 0, 100)
-	rows, err := sto.db.Query("SELECT broadcaster_id, name FROM broadcaster")
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return all
-		}
-		errors.WrapFatal(err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var ch Channel
-		if err := rows.Scan(&ch.ID, &ch.Name); err != nil {
-			errors.WrapFatal(err)
-		}
-		all = append(all, ch)
-	}
-	if err = rows.Err(); err != nil {
-		errors.WrapFatal(err)
-	}
-	return all
-}
-
-// OptimizeChannels queries for the tracked channels, caches them into a map of
-// name to id for later use and returns a slice with the names of all the
-// tracked channels, useful for use outside the storage.
-func (sto *Postgres) OptimizeChannels() []string {
-	chs := sto.Channels()
-
-	strs := make([]string, len(chs))
-	sto.chanIds = make(map[string]int, len(chs))
-	for i, ch := range chs {
-		strs[i] = ch.Name
-		sto.chanIds[ch.Name] = ch.ID
-	}
-	return strs
-}
-
-// Start initializes the storage batcher
-func (sto *Postgres) Start() {
-	if len(sto.chanIds) == 0 {
-		errors.WrapFatal(ErrUncachedChannels)
-	}
-
-	ticker := time.NewTicker(FlushInterval * time.Second)
-	for {
-		// flush the query queue when it is full or every ticker seconds, whichever
-		// comes first
-		select {
-		case op := <-sto.op:
-			if size := sto.enqueue(op); size >= sto.maxqueue {
-				sto.flush()
-			}
-		case <-ticker.C:
-			sto.flush()
-		case <-sto.ctx.Done():
-			log.Print("Stopping tracking")
-			ticker.Stop()
-			return
-		}
-	}
-}
-
-func (sto *Postgres) Stop() error {
-	sto.cancel()
-	// flush any remaining op in the queue before closing the connection
-	sto.flush()
-	if err := sto.db.Close(); err != nil {
-		return err
-	}
-	return nil
-}
+type Channel string
 
 const sep = "|"
 
@@ -210,85 +168,4 @@ func (sto *Postgres) Save(msg *message.Message) {
 	}
 	logmsg.WriteString(" [S]")
 	log.Print(logmsg.String())
-}
-
-func (sto *Postgres) enqueue(op *Op) int {
-	sto.queue[sto.size] = op
-	sto.size++
-	return sto.size
-}
-
-func (sto *Postgres) flush() {
-	if sto.size <= 0 {
-		sto.size = 0
-		return
-	}
-
-	tx, err := sto.db.Begin()
-	if err != nil {
-		errors.WrapFatal(err)
-	}
-
-	stmt, err := tx.Prepare(
-		pq.CopyIn("clearchat", "type", "username", "channel_name", "channel_id", "duration", "at", "messages"),
-	)
-
-	for i, l := 0, sto.size; i < l; i++ {
-		op := sto.queue[i]
-		_, err = stmt.Exec(
-			op.banType,
-			op.username,
-			op.channel,
-			sto.chanIds[op.channel],
-			op.duration,
-			op.at,
-			op.messages,
-		)
-		if err != nil {
-			errors.WrapFatal(err)
-		}
-	}
-
-	if _, err = stmt.Exec(); err != nil {
-		errors.WrapFatal(err)
-	}
-
-	if err = stmt.Close(); err != nil {
-		errors.WrapFatal(err)
-	}
-
-	if err = tx.Commit(); err != nil {
-		errors.WrapFatal(err)
-	}
-
-	sto.size = 0
-}
-
-func NewPostgresStorage() Storage {
-	return NewPostgresStorageWithCancel(
-		context.WithCancel(context.Background()),
-	)
-}
-
-func NewPostgresStorageWithCancel(
-	ctx context.Context,
-	cancel context.CancelFunc,
-) Storage {
-	// rules for storing messages
-	a := heuristics.New([]heuristics.Rule{
-		heuristics.RuleAlwaysStoreBans(),
-		heuristics.RuleOnlyHumanModerations(MinHumanlyPossible),
-		heuristics.RuleMinTimeoutDuration(MinTimeoutDuration),
-		heuristics.RuleNoLinks(),
-	})
-	a.Compile()
-	return &Postgres{
-		analyzer: a,
-		db:       database.New(cfg.DBMigrate),
-		ctx:      ctx,
-		cancel:   cancel,
-		op:       make(chan *Op, OpQueueSize),
-		queue:    make([]*Op, OpQueueSize),
-		maxqueue: OpQueueSize,
-	}
 }
