@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hammertrack/tracker/internal/errors"
+	"github.com/hammertrack/tracker/errors"
 	"github.com/hammertrack/tracker/internal/heuristics"
 	"github.com/hammertrack/tracker/internal/message"
 )

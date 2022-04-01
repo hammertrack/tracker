@@ -5,7 +5,7 @@ import (
 	"reflect"
 	"strconv"
 
-	"github.com/hammertrack/tracker/internal/errors"
+	"github.com/hammertrack/tracker/errors"
 	"github.com/joho/godotenv"
 )
 

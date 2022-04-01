@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/hammertrack/tracker/internal/color"
-	"github.com/hammertrack/tracker/internal/utils"
+	"github.com/hammertrack/tracker/color"
+	"github.com/hammertrack/tracker/utils"
 )
 
 type CustomLogger struct{}

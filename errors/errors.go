@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hammertrack/tracker/internal/color"
+	"github.com/hammertrack/tracker/color"
 )
 
 type Generic struct {

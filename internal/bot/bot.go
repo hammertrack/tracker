@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/gempir/go-twitch-irc/v3"
+	"github.com/hammertrack/tracker/errors"
 	cfg "github.com/hammertrack/tracker/internal/config"
 	"github.com/hammertrack/tracker/internal/database"
-	"github.com/hammertrack/tracker/internal/errors"
 	"github.com/hammertrack/tracker/internal/message"
 )
 

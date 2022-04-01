@@ -14,8 +14,8 @@ import (
 
 	// _ "github.com/lib/pq"
 
+	"github.com/hammertrack/tracker/errors"
 	cfg "github.com/hammertrack/tracker/internal/config"
-	"github.com/hammertrack/tracker/internal/errors"
 )
 
 var (

@@ -6,7 +6,7 @@ import (
 	"log"
 
 	"github.com/hammertrack/tracker/internal/config"
-	"github.com/hammertrack/tracker/internal/utils"
+	"github.com/hammertrack/tracker/utils"
 )
 
 //go:embed banner.txt

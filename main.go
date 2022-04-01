@@ -9,7 +9,7 @@ import (
 	"github.com/davecgh/go-spew/spew"
 
 	"github.com/hammertrack/tracker/internal/bot"
-	"github.com/hammertrack/tracker/internal/logger"
+	"github.com/hammertrack/tracker/logger"
 )
 
 func waitSignInt() {
