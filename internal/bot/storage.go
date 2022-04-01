@@ -8,9 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"pedro.to/hammertrace/tracker/internal/errors"
-	"pedro.to/hammertrace/tracker/internal/heuristics"
-	"pedro.to/hammertrace/tracker/internal/message"
+	"github.com/hammertrack/tracker/internal/errors"
+	"github.com/hammertrack/tracker/internal/heuristics"
+	"github.com/hammertrack/tracker/internal/message"
 )
 
 const (

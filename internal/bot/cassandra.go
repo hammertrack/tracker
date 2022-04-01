@@ -5,8 +5,8 @@ import (
 
 	"github.com/gocql/gocql"
 
-	"pedro.to/hammertrace/tracker/internal/errors"
-	"pedro.to/hammertrace/tracker/internal/message"
+	"github.com/hammertrack/tracker/internal/errors"
+	"github.com/hammertrack/tracker/internal/message"
 )
 
 type Cassandra struct {

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log"
 
-	"pedro.to/hammertrace/tracker/internal/config"
-	"pedro.to/hammertrace/tracker/internal/utils"
+	"github.com/hammertrack/tracker/internal/config"
+	"github.com/hammertrack/tracker/internal/utils"
 )
 
 //go:embed banner.txt

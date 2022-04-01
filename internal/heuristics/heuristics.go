@@ -3,7 +3,7 @@ package heuristics
 import (
 	"time"
 
-	"pedro.to/hammertrace/tracker/internal/message"
+	"github.com/hammertrack/tracker/internal/message"
 )
 
 type Traits struct {

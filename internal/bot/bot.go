@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"github.com/gempir/go-twitch-irc/v3"
-	cfg "pedro.to/hammertrace/tracker/internal/config"
-	"pedro.to/hammertrace/tracker/internal/database"
-	"pedro.to/hammertrace/tracker/internal/errors"
-	"pedro.to/hammertrace/tracker/internal/message"
+	cfg "github.com/hammertrack/tracker/internal/config"
+	"github.com/hammertrack/tracker/internal/database"
+	"github.com/hammertrack/tracker/internal/errors"
+	"github.com/hammertrack/tracker/internal/message"
 )
 
 // noopPrivmsg is used as default

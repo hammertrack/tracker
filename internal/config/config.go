@@ -5,8 +5,8 @@ import (
 	"reflect"
 	"strconv"
 
+	"github.com/hammertrack/tracker/internal/errors"
 	"github.com/joho/godotenv"
-	"pedro.to/hammertrace/tracker/internal/errors"
 )
 
 var ErrParseEnv = errors.New("environment variable could not be parsed")

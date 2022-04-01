@@ -3,7 +3,7 @@ package heuristics
 import (
 	"regexp"
 
-	"pedro.to/hammertrace/tracker/internal/message"
+	"github.com/hammertrack/tracker/internal/message"
 )
 
 // NoLinks - No links stored

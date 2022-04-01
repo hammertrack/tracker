@@ -8,8 +8,8 @@ import (
 
 	"github.com/davecgh/go-spew/spew"
 
-	"pedro.to/hammertrace/tracker/internal/bot"
-	"pedro.to/hammertrace/tracker/internal/logger"
+	"github.com/hammertrack/tracker/internal/bot"
+	"github.com/hammertrack/tracker/internal/logger"
 )
 
 func waitSignInt() {

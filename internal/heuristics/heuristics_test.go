@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/davecgh/go-spew/spew"
-	"pedro.to/hammertrace/tracker/internal/message"
+	"github.com/hammertrack/tracker/internal/message"
 )
 
 type RuleTest struct {

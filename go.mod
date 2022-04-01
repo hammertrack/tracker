@@ -1,4 +1,4 @@
-module pedro.to/hammertrace/tracker
+module github.com/hammertrack/tracker
 
 go 1.18
 
