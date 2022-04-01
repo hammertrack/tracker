@@ -15,6 +15,7 @@ const Version string = "0.0.1"
 
 var (
 	DBHost     string
+	DBKeyspace string
 	DBPort     string
 	DBUser     string
 	DBPassword string
@@ -86,6 +87,7 @@ func init() {
 	}
 
 	DBHost = Env("DB_HOST", "127.0.0.1")
+	DBKeyspace = Env("DB_KEYSPACE", "hammertrack")
 	DBPort = Env("DB_PORT", "5200")
 	DBUser = Env("DB_USER", "tracker")
 	DBPassword = Env("DB_PASSWORD", "unsafepassword")

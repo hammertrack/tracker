@@ -1,4 +1,5 @@
 etc/*
+cassandra/*
 tracker
 
 .DS_Store

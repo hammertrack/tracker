@@ -1,13 +1,14 @@
 package bot
 
 import (
-	"database/sql"
 	"log"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/gempir/go-twitch-irc/v3"
 	cfg "pedro.to/hammertrace/tracker/internal/config"
+	"pedro.to/hammertrace/tracker/internal/database"
 	"pedro.to/hammertrace/tracker/internal/errors"
 	"pedro.to/hammertrace/tracker/internal/message"
 )
@@ -28,18 +29,19 @@ func handleClearChat(msg twitch.ClearChatMessage) {
 	var (
 		d        = msg.BanDuration
 		ch       = msg.Channel
-		typ      = message.MessageTimeout
+		typ      = message.MessageBan
 		username = msg.TargetUsername
 	)
 	if username == "" {
 		// ignore a CLEARCHAT of all messages with no specific user
 		return
 	}
-	if d == 0 {
-		typ = message.MessageBan
+	if d != 0 {
+		// ignore everything but bans
+		return
 	}
-	log.Printf("OnClearChat channel:%s duration:%d user:%s", ch, d, msg.TargetUsername)
 
+	log.Printf("->[#%s] :%s", msg.Channel, msg.TargetUsername)
 	tracked[ch] <- &message.Message{
 		Type:     typ,
 		Duration: d,
@@ -51,7 +53,6 @@ func handleClearChat(msg twitch.ClearChatMessage) {
 
 // handleClearChat is called when a new deletion is received
 func handleClear(msg twitch.ClearMessage) {
-	log.Printf("OnClear channel:%s user:%s", msg.Channel, msg.Login)
 	tracked[msg.Channel] <- &message.Message{
 		TargetMsgID: msg.TargetMsgID,
 		Type:        message.MessageDeletion,
@@ -64,11 +65,13 @@ func handleClear(msg twitch.ClearMessage) {
 // handlePrivmsg is called when a new message in the twitch chat of any of the
 // tracked twitch channels is received
 func handlePrivmsg(msg twitch.PrivateMessage) {
+	sub, _ := strconv.Atoi(msg.Tags["suscriber"])
 	privmsg := &message.PrivateMessage{
-		ID:       msg.ID,
-		Username: msg.User.Name,
-		Body:     msg.Message,
-		At:       msg.Time,
+		ID:         msg.ID,
+		Username:   msg.User.Name,
+		Body:       msg.Message,
+		At:         msg.Time,
+		Subscribed: message.SubscribedStatus(sub),
 	}
 	tracked[msg.Channel] <- &message.Message{
 		Type:         message.MessagePrivmsg,
@@ -80,8 +83,7 @@ func handlePrivmsg(msg twitch.PrivateMessage) {
 }
 
 type Bot struct {
-	sto Storage
-	db  *sql.DB
+	sto *Storage
 	// client is the IRC Client
 	client *twitch.Client
 	// trackerReady is a channel for signaling when all the go-routine are spawned and
@@ -96,16 +98,19 @@ type Bot struct {
 }
 
 // StartClient initializes the IRC client and connects to the IRC server
-func (b *Bot) StartClient(channels []string) error {
+func (b *Bot) StartClient(channels []Channel) error {
 	b.client = twitch.NewClient(cfg.ClientUsername, cfg.ClientToken)
 	b.client.OnClearChatMessage(handleClearChat)
-	b.client.OnClearMessage(handleClear)
+	// b.client.OnClearMessage(handleClear)
 	b.client.OnPrivateMessage(handlePrivmsg)
 	b.client.OnConnect(func() {
 		b.ircReady <- struct{}{}
 	})
 
-	b.client.Join(channels...)
+	for _, ch := range channels {
+		b.client.Join(string(ch))
+	}
+
 	if err := b.client.Connect(); err != nil {
 		return err
 	}
@@ -113,12 +118,12 @@ func (b *Bot) StartClient(channels []string) error {
 }
 
 // StartTracker initializes the channels tracker
-func (b *Bot) StartTracker(channels []string) {
+func (b *Bot) StartTracker(channels []Channel) {
 	var w sync.WaitGroup
 
 	for _, ch := range channels {
 		msgch := make(chan *message.Message, 100)
-		tracked[ch] = msgch
+		tracked[string(ch)] = msgch
 
 		w.Add(1)
 		go func(msgch chan *message.Message) {
@@ -175,19 +180,25 @@ func (b *Bot) StartTracker(channels []string) {
 
 func (b *Bot) Start() {
 	var w sync.WaitGroup
+
 	log.Print("initializing storage...")
-	b.SetStorage(NewPostgresStorage())
-	chs := b.sto.OptimizeChannels()
+	sess := database.New(cfg.DBMigrate)
+	driver := NewCassandraStorage(sess)
+	b.SetStorage(NewStorage(driver))
 	w.Add(1)
 	go func() {
 		b.sto.Start()
-		log.Print("storage stopped ")
 		w.Done()
 	}()
 
+	chs, err := b.sto.Channels()
+	if err != nil {
+		errors.WrapFatal(err)
+	}
+	log.Printf("channels about to be tracked: %v", chs)
 	log.Print("initializing channel tracker...")
 	w.Add(1)
-	go func(chs []string) {
+	go func(chs []Channel) {
 		b.StartTracker(chs)
 		w.Done()
 	}(chs)
@@ -196,7 +207,7 @@ func (b *Bot) Start() {
 
 	log.Print("initializing IRC client...")
 	w.Add(1)
-	go func(chs []string) {
+	go func(chs []Channel) {
 		if err := b.StartClient(chs); err != nil {
 			if !errors.Is(err, twitch.ErrClientDisconnected) {
 				errors.WrapFatal(err)
@@ -210,7 +221,7 @@ func (b *Bot) Start() {
 	w.Wait()
 }
 
-func (b *Bot) SetStorage(sto Storage) {
+func (b *Bot) SetStorage(sto *Storage) {
 	b.sto = sto
 }
 
@@ -233,9 +244,7 @@ func (b *Bot) Stop() error {
 
 	// Gracefully close storage and underlying database
 	log.Print("stopping storage")
-	if err := b.sto.Stop(); err != nil {
-		return err
-	}
+	b.sto.Stop()
 	log.Print("storage stopped")
 
 	return nil

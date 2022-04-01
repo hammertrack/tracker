@@ -1,30 +1,29 @@
 version: "3.9"
 services:
-  db:
-    image: postgres
+  cassandra:
+    build: ./internal/database
     restart: always
-    environment:
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_DB: ${DB_NAME}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
     ports:
-      - "${DB_PORT}:${DB_PORT}"
+      - "9042:9042"
     volumes:
-      - ./etc:/var/lib/postgresql/data
+      - ./cassandra:/var/lib/cassandra
     networks:
       - app
-    command: -p ${DB_PORT} -c stats_temp_directory=/tmp
+    environment:
+      CASSANDRA_CLUSTER_NAME: ${DB_CLUSTER_NAME}
+      DB_KEYSPACE: ${DB_KEYSPACE}
 
   tracker:
     environment:
-      DB_HOST: db
+      DB_HOST: cassandra
       DB_USER: ${DB_USER}
       DB_NAME: ${DB_NAME}
       DB_PASSWORD: ${DB_PASSWORD}
-      DB_PORT: ${DB_PORT}
+      DB_PORT: "9042"
       DB_MIGRATE: ${DB_MIGRATE}
+      DB_KEYSPACE: ${DB_KEYSPACE}
     depends_on:
-      - db
+      - cassandra
     build: .
     networks:
       - app

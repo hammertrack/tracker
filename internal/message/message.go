@@ -9,7 +9,17 @@ const (
 	MessageBan      MessageType = "ban"
 	MessageTimeout  MessageType = "timeout"
 	MessageDeletion MessageType = "deletion"
+)
 
+type SubscribedStatus int
+
+const (
+	SubscribedStatusFalse SubscribedStatus = iota
+	SubscribedStatusTrue
+	SubscribedStatusUnknown
+)
+
+const (
 	// MaxHistory represents the number of messages stored in a in-memory history
 	// for each channel. It should be equal to the messages displayed in twitch or
 	// at least the maximum number of messages which a moderator can take an
@@ -19,11 +29,12 @@ const (
 
 // PrivateMessage represents each chat message in the IRC, i.e. twitch chat.
 type PrivateMessage struct {
-	ID       string
-	Username string
-	Body     string
-	At       time.Time
-	Stored   bool
+	ID         string
+	Username   string
+	Body       string
+	At         time.Time
+	Stored     bool
+	Subscribed SubscribedStatus
 }
 
 // Message represents a message coming from the IRC client. It denormalizes the
