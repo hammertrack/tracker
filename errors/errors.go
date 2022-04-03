@@ -124,6 +124,9 @@ func (e Generic) Trace() string {
 // from Wrap and WrapWithContext, otherwise the caller function information will
 // be wrong
 func newGeneric(err error, depth int, ctx interface{}) *Generic {
+	if err == nil {
+		return nil
+	}
 	now := time.Now()
 	pc, fn, line, _ := runtime.Caller(depth)
 	return &Generic{
