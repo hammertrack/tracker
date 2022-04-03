@@ -125,7 +125,7 @@ func (e Generic) Trace() string {
 // be wrong
 func newGeneric(err error, depth int, ctx interface{}) *Generic {
 	if err == nil {
-		return nil
+		panic("errors.wrap called with a nil err")
 	}
 	now := time.Now()
 	pc, fn, line, _ := runtime.Caller(depth)
