@@ -182,6 +182,7 @@ func id(t time.Time, msg string) string {
 }
 
 func trimUntil(s string, del string, offset int) string {
+	fmt.Printf("s: %s, del: %s, offset: %d", s, del, offset)
 	if i := strings.Index(s, del); i > 0 {
 		return s[i+offset:]
 	}
